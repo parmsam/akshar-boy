@@ -37,6 +37,7 @@ body{background:radial-gradient(circle at 30% 15%,#3b404c,#15171c 70%);min-heigh
 /* ---------- controls ---------- */
 .controls{display:flex;justify-content:space-between;align-items:center;margin-top:30px}
 .dpad{width:36%;aspect-ratio:1;position:relative}
+.dp,.rb,.pill button,.screen{touch-action:none}
 .dp,.dc{position:absolute;background:#2a2a30;border:0;padding:0}
 .dp{cursor:pointer;box-shadow:0 3px 0 #141417}
 .dp.u{left:33%;top:0;width:34%;height:36%;border-radius:4px 4px 0 0}
@@ -274,7 +275,19 @@ const mastered=l=>{const s=sOf(l);return s.c>=3&&s.c/(s.c+s.w)>=.75};
 
 /* ---------------- audio ---------------- */
 let ac=null;
-function unlock(){if(!ac){try{ac=new(window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(ac&&ac.state==='suspended')ac.resume().catch(()=>{})}
+const IOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+let primed=false,audioPrimed=false;
+function unlock(){
+  if(!ac){try{ac=new(window.AudioContext||window.webkitAudioContext)()}catch(e){}}
+  if(ac){
+    if(ac.state!=='running')ac.resume().catch(()=>{});
+    if(!audioPrimed){audioPrimed=true;try{const b=ac.createBuffer(1,1,22050),src=ac.createBufferSource();src.buffer=b;src.connect(ac.destination);src.start(0)}catch(e){}}
+  }
+  // iOS only allows speech after one speak() call made directly inside a tap
+  if(IOS&&!primed&&window.speechSynthesis&&window.SpeechSynthesisUtterance){
+    primed=true;try{const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}
+  }
+}
 function beep(f,d=.07,when=0,type='square',vol=.05){if(!ac||!st.sound)return;try{const t=ac.currentTime+when,o=ac.createOscillator(),g=ac.createGain();o.type=type;o.frequency.setValueAtTime(f,t);g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.0001,t+d);o.connect(g).connect(ac.destination);o.start(t);o.stop(t+d+.02)}catch(e){}}
 const sfx={
   move:()=>beep(1320,.025,0,'square',.03),
@@ -303,9 +316,9 @@ function speak(parts,{notify=false}={}){
   const mode=gu?'gu':hi?'hi':'ro',voice=gu||hi||en;
   if(mode==='ro'&&(notify||!fbNote)){fbNote=true;toast(voices.length?'NO GUJARATI VOICE —<br>READING ROMANIZED':'NO VOICES FOUND<br>CHECK DEVICE SETTINGS')}
   const gen=++sayGen;
-  try{ss.cancel();ss.resume()}catch(e){}
-  // Chrome can drop an utterance queued in the same tick as cancel()
-  setTimeout(()=>{
+  const busy=ss.speaking||ss.pending;
+  try{if(busy||IOS)ss.cancel()}catch(e){}
+  const run=()=>{
     if(gen!==sayGen)return;
     keep.length=0;let played=false;
     parts.forEach(p=>{
@@ -317,8 +330,12 @@ function speak(parts,{notify=false}={}){
       u.onerror=e=>{played=true;if(!/interrupted|canceled/.test(e.error))toast('SPEECH ERROR:<br>'+String(e.error).toUpperCase())};
       keep.push(u);ss.speak(u);
     });
+    try{ss.resume()}catch(e){}
     setTimeout(()=>{if(gen===sayGen&&notify&&!played&&!ss.speaking&&!ss.pending)toast('COULD NOT PLAY SPEECH<br>CHECK VOLUME / PERMISSIONS')},3000);
-  },80);
+  };
+  // Speak inside the tap (required on iOS). Desktop Chrome can drop an utterance
+  // queued in the same tick as cancel(), so defer only in that case.
+  if(busy&&!IOS)setTimeout(run,60);else run();
 }
 const sayLetter=(l,word,notify)=>speak(word&&l.w?[{gu:l.g,ro:l.r},{gu:l.w,ro:l.wr}]:[{gu:l.g,ro:l.r}],{notify});
 const sayWord=l=>l.w&&speak([{gu:l.w,ro:l.wr}],{notify:true});
@@ -552,12 +569,13 @@ function press(b){unlock();if(!S.power)return;const h=H[S.screen];h&&h(b)}
 /* buttons */
 document.querySelectorAll('[data-b]').forEach(el=>{
   const b=el.dataset.b;
-  el.addEventListener('pointerdown',e=>{e.preventDefault();el.classList.add('down');press(b)});
-  ['pointerup','pointerleave','pointercancel'].forEach(t=>el.addEventListener(t,()=>el.classList.remove('down')));
+  el.addEventListener('pointerdown',e=>{e.preventDefault();el.classList.add('down');if(e.pointerType==='mouse')press(b);else el._armed=true});
+  el.addEventListener('pointerup',()=>{el.classList.remove('down');if(el._armed){el._armed=false;press(b)}});
+  ['pointerleave','pointercancel'].forEach(t=>el.addEventListener(t,()=>{el.classList.remove('down');el._armed=false}));
   el.addEventListener('contextmenu',e=>e.preventDefault());
 });
 /* taps on the screen itself */
-view.addEventListener('pointerdown',e=>{
+function screenTap(e){
   unlock();if(!S.power)return;
   const op=e.target.closest('[data-op]'),mi=e.target.closest('[data-mi]'),li=e.target.closest('[data-li]');
   if(op&&S.screen==='game'){const i=+op.dataset.op;if(G.answered)advance();else{G.sel=i;answer(i)}}
@@ -565,7 +583,9 @@ view.addEventListener('pointerdown',e=>{
   else if(li&&S.screen==='learn'){const i=+li.dataset.li;if(i===S.li)H.learn('a');else{S.li=i;sfx.move();render()}}
   else if(S.screen==='title'||S.screen==='boot')press('start');
   else if(S.screen==='learn'&&S.lv==='card'){if(e.target.closest('[data-say]'))sayWord(pool()[S.li]);else press('a')}
-});
+}
+view.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse')screenTap(e)});
+view.addEventListener('pointerup',e=>{if(e.pointerType!=='mouse')screenTap(e)});
 /* keyboard */
 const KM={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',x:'a',X:'a',' ':'a',k:'a',z:'b',Z:'b',j:'b',Escape:'b',Backspace:'b',Enter:'start',Shift:'select'};
 const BTN={up:'.dp.u',down:'.dp.d',left:'.dp.l',right:'.dp.r',a:'.bw.a .rb',b:'.bw.b .rb',select:'[data-b=select]',start:'[data-b=start]'};
