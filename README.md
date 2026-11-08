@@ -44,3 +44,7 @@ python3 -m http.server
 ```
 
 Fonts (Press Start 2P, VT323, Noto Sans Gujarati) load from Google Fonts.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
