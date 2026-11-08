@@ -2,6 +2,8 @@
 
 A Game Boy–style web game for learning the Gujarati alphabet.
 
+*Vibe coded with [Claude](https://claude.ai) by Anthropic.*
+
 **▶ Play: https://parmsam.github.io/akshar-boy/**
 
 ## Modes
